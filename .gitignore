@@ -1,0 +1,25 @@
+# Archivos de IDE
+.idea/
+*.iml
+
+# Archivos de Chrome/Selenium
+.chrome_ieee_profile/
+requerimiento1/.chrome_ieee_profile/
+
+# Caché y datos temporales
+Cache_Data/
+*.tmp
+*.log
+
+# Archivos de datos temporales
+__pycache__/
+*.pyc
+*.pyo
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+.env
+
+# Archivos de descargas temporales
+descargas/temp/

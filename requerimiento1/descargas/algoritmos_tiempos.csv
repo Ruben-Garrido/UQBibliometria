@@ -1,0 +1,13 @@
+algoritmo,tiempo_ms
+TimSort,0.0943
+Pigeonhole Sort,0.1083
+BucketSort,0.1521
+RadixSort,0.2935
+HeapSort,1.7824
+Comb Sort,2.1676
+Binary Insertion Sort,4.3039
+Tree Sort,8.2958
+Bitonic Sort,10.8593
+Selection Sort,12.3200
+QuickSort,22.7354
+Gnome Sort,24.5110
