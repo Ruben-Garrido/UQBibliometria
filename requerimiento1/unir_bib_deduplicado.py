@@ -23,6 +23,68 @@ ACM_BIB = BASE_DIR / "acm" / "acmCompleto.bib"
 SCIENCE_BIB = BASE_DIR / "ScienceDirect" / "sciencedirectCompleto.bib"
 SALIDA_BIB = BASE_DIR / "resultado_unificado.bib"
 
+# -------- Clase principal para unificar BibTeX --------
+
+class UnificadorBibTeX:
+    """Clase para unificar y deduplicar archivos BibTeX."""
+    
+    def __init__(self):
+        """Inicializa el unificador con las rutas predefinidas."""
+        self.base_dir = BASE_DIR
+        self.acm_bib = ACM_BIB
+        self.science_bib = SCIENCE_BIB
+        self.salida_bib = SALIDA_BIB
+    
+    def unificar(self) -> bool:
+        """
+        Unifica y deduplica los archivos BibTeX.
+        
+        Returns:
+            bool: True si el proceso fue exitoso, False en caso contrario
+        """
+        try:
+            print(f"📥 Leyendo:\n - {self.acm_bib}\n - {self.science_bib}")
+            acm_entries = cargar_bib(self.acm_bib)
+            sd_entries = cargar_bib(self.science_bib)
+
+            all_entries = []
+            all_entries.extend(acm_entries)
+            all_entries.extend(sd_entries)
+
+            if not all_entries:
+                print("❌ No se encontraron entradas en los .bib de origen.")
+                return False
+
+            # Deduplicar por título normalizado
+            by_title = {}
+            for e in all_entries:
+                tkey = normalized_title(e)
+                if not tkey:
+                    tkey = f"__notitle__::{e.get('ID','noid')}"
+                if tkey in by_title:
+                    by_title[tkey] = merge_entries(by_title[tkey], e)
+                else:
+                    by_title[tkey] = e
+
+            # Reasignar ID seguro
+            final_entries = []
+            for idx, (tkey, e) in enumerate(by_title.items(), start=1):
+                if not e.get("ID"):
+                    base = re.sub(r"\s+", "_", tkey)[:40].strip("_")
+                    e["ID"] = f"{base or 'entry'}_{idx}"
+                final_entries.append(e)
+
+            print(f"🧮 Entradas originales: {len(all_entries)}")
+            print(f"✅ Entradas tras deduplicar: {len(final_entries)}")
+
+            guardar_bib(final_entries, self.salida_bib)
+            print(f"💾 Archivo unificado escrito en: {self.salida_bib}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error al unificar: {e}")
+            return False
+
 # -------- Utilidades de normalización / split --------
 
 PUNCT_PATTERN = re.compile(r"[^\w\s]", re.UNICODE)
