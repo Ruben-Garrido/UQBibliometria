@@ -7,6 +7,8 @@ matplotlib==3.7.1
 seaborn==0.12.2
 plotly==5.15.0
 wordcloud==1.9.2
+networkx==3.2.1
+kaleido==0.2.1
 
 # NLP y procesamiento de texto
 nltk==3.8.1

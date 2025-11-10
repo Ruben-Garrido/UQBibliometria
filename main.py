@@ -1,15 +1,19 @@
 # main.py
 from requerimiento1.acm_descarga import ACMDescarga
-from requerimiento1.scienciedirect import ScienceDirectDescarga
+from requerimiento1.sciencedirect import ScienceDirectDescarga  # <-- corrección de nombre
 
-# Import del unificador ubicado dentro de requerimiento1/
+# Import del unificador (principal) con fallback si el archivo se llama distinto
 try:
     from requerimiento1.unir_bib_deduplicado import main as unir_bib
 except ImportError:
-    # Si lo llamaste unir_bib.py, usamos este fallback
-    from requerimiento1.unir_bib_deduplicado import main as unir_bib
+    try:
+        # Fallback alternativo si el archivo se llamara unir_bib.py
+        from requerimiento1.unir_bib_deduplicado import main as unir_bib
+    except ImportError:
+        raise
 
 import traceback
+import os
 
 
 def run_sciencedirect(query: str = "generative artificial intelligence"):
@@ -41,7 +45,8 @@ def run_acm():
 def run_unificador():
     print("=== [3/3] Unificando BibTeX (ACM + ScienceDirect) ===")
     try:
-        unir_bib()  # escribe 'resultado_unificado.bib' en la carpeta de descargas configurada
+        # escribe 'resultado_unificado.bib' en la carpeta de descargas configurada
+        unir_bib()
         print("=== [3/3] Unificación completada ===\n")
     except Exception:
         print("❌ Error durante la unificación:")
@@ -50,19 +55,18 @@ def run_unificador():
 
 if __name__ == "__main__":
     # Crear las carpetas necesarias antes de comenzar
-    import os
     base_dir = os.path.join(os.path.dirname(__file__), "requerimiento1", "descargas")
     acm_dir = os.path.join(base_dir, "acm")
     sd_dir = os.path.join(base_dir, "ScienceDirect")
-    
+
     for dir_path in [base_dir, acm_dir, sd_dir]:
         os.makedirs(dir_path, exist_ok=True)
-    
+
     # 1) Ejecutar ScienceDirect primero (ajusta el query si quieres)
-    #run_sciencedirect("generative artificial intelligence")
+    # run_sciencedirect("generative artificial intelligence")
 
     # 2) Ejecutar ACM después
-    #run_acm()
+    # run_acm()
 
     # 3) Unificar ambos .bib en un solo archivo
     run_unificador()

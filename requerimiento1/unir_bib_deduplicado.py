@@ -3,13 +3,22 @@
 Une y deduplica BibTeX de ACM + ScienceDirect en un solo archivo.
 Criterio de duplicado: título (normalizado).
 Fusión de campos para preservar la mayor cantidad de información.
+
+Changelog:
+- Genera `duplicados_eliminados.bib` con las entradas descartadas por duplicado.  # NOTE
+- Genera `registros_incompletos.csv` para diagnosticar faltantes (title/year/abstract).  # NOTE
+- Mantiene compatibilidad con la clase UnificadorBibTeX.unificar() → bool.
 """
 
 import os
 import re
 import sys
+import csv  # NOTE: para exportar registros incompletos
 import unicodedata
 from pathlib import Path
+from typing import List, Dict, Tuple
+
+# ---------------- Rutas ----------------
 
 # Ruta relativa a la carpeta de descargas
 BASE_DIR = Path(__file__).parent / "descargas"
@@ -18,12 +27,16 @@ BASE_DIR.mkdir(parents=True, exist_ok=True)
 (BASE_DIR / "acm").mkdir(exist_ok=True)
 (BASE_DIR / "ScienceDirect").mkdir(exist_ok=True)
 
-# Corregir las rutas para buscar en las subcarpetas correctas
+# Entradas de origen
 ACM_BIB = BASE_DIR / "acm" / "acmCompleto.bib"
 SCIENCE_BIB = BASE_DIR / "ScienceDirect" / "sciencedirectCompleto.bib"
-SALIDA_BIB = BASE_DIR / "resultado_unificado.bib"
 
-# -------- Clase principal para unificar BibTeX --------
+# Salidas
+SALIDA_BIB = BASE_DIR / "resultado_unificado.bib"
+DUPS_BIB = BASE_DIR / "duplicados_eliminados.bib"     # NOTE
+INCOMPLETOS_CSV = BASE_DIR / "registros_incompletos.csv"  # NOTE
+
+# ---------------- Clase principal ----------------
 
 class UnificadorBibTeX:
     """Clase para unificar y deduplicar archivos BibTeX."""
@@ -34,6 +47,8 @@ class UnificadorBibTeX:
         self.acm_bib = ACM_BIB
         self.science_bib = SCIENCE_BIB
         self.salida_bib = SALIDA_BIB
+        self.dup_bib = DUPS_BIB                   # NOTE
+        self.incompletos_csv = INCOMPLETOS_CSV    # NOTE
     
     def unificar(self) -> bool:
         """
@@ -47,7 +62,7 @@ class UnificadorBibTeX:
             acm_entries = cargar_bib(self.acm_bib)
             sd_entries = cargar_bib(self.science_bib)
 
-            all_entries = []
+            all_entries: List[Dict] = []
             all_entries.extend(acm_entries)
             all_entries.extend(sd_entries)
 
@@ -55,19 +70,36 @@ class UnificadorBibTeX:
                 print("❌ No se encontraron entradas en los .bib de origen.")
                 return False
 
+            # Diagnóstico de registros incompletos (no impide unificación)  # NOTE
+            incompletos = detectar_incompletos(all_entries)
+            if incompletos:
+                exportar_incompletos_csv(incompletos, self.incompletos_csv)
+                print(f"📝 Registros incompletos listados en: {self.incompletos_csv}")
+            else:
+                # Si no hay incompletos de interés, elimina CSV previo para no confundir
+                try:
+                    if self.incompletos_csv.exists():
+                        self.incompletos_csv.unlink()
+                except Exception:
+                    pass
+
             # Deduplicar por título normalizado
-            by_title = {}
+            by_title: Dict[str, Dict] = {}
+            duplicados_descartados: List[Dict] = []  # NOTE: recolecta duplicados
             for e in all_entries:
                 tkey = normalized_title(e)
                 if not tkey:
+                    # Sin título → clave estable por ID para no perder el registro
                     tkey = f"__notitle__::{e.get('ID','noid')}"
                 if tkey in by_title:
+                    # Registrar el que se reemplaza como duplicado/descartado   # NOTE
+                    duplicados_descartados.append(e)
                     by_title[tkey] = merge_entries(by_title[tkey], e)
                 else:
                     by_title[tkey] = e
 
             # Reasignar ID seguro
-            final_entries = []
+            final_entries: List[Dict] = []
             for idx, (tkey, e) in enumerate(by_title.items(), start=1):
                 if not e.get("ID"):
                     base = re.sub(r"\s+", "_", tkey)[:40].strip("_")
@@ -76,16 +108,31 @@ class UnificadorBibTeX:
 
             print(f"🧮 Entradas originales: {len(all_entries)}")
             print(f"✅ Entradas tras deduplicar: {len(final_entries)}")
+            print(f"♻️ Duplicados descartados (registrados): {len(duplicados_descartados)}")  # NOTE
 
+            # Guardar unificado
             guardar_bib(final_entries, self.salida_bib)
             print(f"💾 Archivo unificado escrito en: {self.salida_bib}")
+
+            # Guardar duplicados descartados (si los hay)  # NOTE
+            if duplicados_descartados:
+                guardar_bib(duplicados_descartados, self.dup_bib)
+                print(f"📄 Archivo con duplicados eliminados: {self.dup_bib}")
+            else:
+                # limpiar archivo anterior si existía
+                try:
+                    if self.dup_bib.exists():
+                        self.dup_bib.unlink()
+                except Exception:
+                    pass
+
             return True
             
         except Exception as e:
             print(f"❌ Error al unificar: {e}")
             return False
 
-# -------- Utilidades de normalización / split --------
+# ---------------- Utilidades de normalización / split ----------------
 
 PUNCT_PATTERN = re.compile(r"[^\w\s]", re.UNICODE)
 
@@ -93,12 +140,17 @@ def strip_braces(s: str) -> str:
     return s.replace("{", "").replace("}", "")
 
 def normalize_text(s: str) -> str:
-    s = strip_braces(s)
+    s = strip_braces(s or "")
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
     s = s.lower().strip()
     s = PUNCT_PATTERN.sub(" ", s)
     s = re.sub(r"\s+", " ", s)
     return s
+
+def normalized_title(entry: Dict) -> str:
+    """Obtiene el título normalizado usando varias claves posibles."""
+    title = entry.get("title") or entry.get("Title") or entry.get("TITLE") or ""
+    return normalize_text(title)
 
 def smart_union_list(values, sep_candidates=(" and ", ";", ",")):
     """
@@ -110,12 +162,11 @@ def smart_union_list(values, sep_candidates=(" and ", ";", ",")):
     for s in values:
         if s is None:
             continue
-        txt = s.strip()
+        txt = str(s).strip()
         if not txt:
             continue
         parts = [txt]
-        # romper por el primer separador que funcione "bien"
-        # intentaremos todos para capturar casos mixtos
+        # intentar todos los separadores para capturar casos mixtos
         for sep in sep_candidates:
             new_parts = []
             for p in parts:
@@ -138,18 +189,16 @@ def merge_scalar(a: str, b: str) -> str:
     if a == b: return a
     if a in b: return b
     if b in a: return a
-    # evitar concatenar si normalizados son iguales
     if normalize_text(a) == normalize_text(b):
         return a if len(a) >= len(b) else b
     return f"{a} | {b}"
 
-# -------- Intentar usar bibtexparser, con fallback sencillo --------
+# ---------------- bibtexparser (con fallback simple) ----------------
 
 def _load_with_bibtexparser(path: Path):
     import bibtexparser
     with open(path, "r", encoding="utf-8") as f:
         db = bibtexparser.load(f)
-    # Representar cada entrada como dict plano
     return db
 
 def _dump_with_bibtexparser(entries, salida: Path):
@@ -238,7 +287,7 @@ def guardar_bib(entries, salida: Path):
         print(f"ℹ No pude usar bibtexparser para escribir ({e}). Usando volcado simple.")
         _simple_bib_dump(entries, salida)
 
-# -------- Lógica de fusión / deduplicación --------
+# ---------------- Lógica de fusión / deduplicación ----------------
 
 LIST_FIELDS = {
     "author": (" and ", ";", ","),
@@ -246,11 +295,7 @@ LIST_FIELDS = {
 }
 UNION_FIELDS = {"author", "keywords", "doi", "url"}  # doi/url también se unen sin repetir
 
-def normalized_title(entry: dict) -> str:
-    title = entry.get("title", "") or entry.get("Title", "")
-    return normalize_text(title)
-
-def merge_entries(e1: dict, e2: dict) -> dict:
+def merge_entries(e1: Dict, e2: Dict) -> Dict:
     merged = dict(e1)  # base
     # Alinear ENTRYTYPE
     et1 = e1.get("ENTRYTYPE", "")
@@ -262,8 +307,8 @@ def merge_entries(e1: dict, e2: dict) -> dict:
 
     # IDs alternativos (para rastreabilidad)
     aliases = []
-    if "ID" in e1: aliases.append(e1["ID"])
-    if "ID" in e2 and e2["ID"] != e1.get("ID"): aliases.append(e2["ID"])
+    if "ID" in e1: aliases.append(str(e1["ID"]))
+    if "ID" in e2 and e2["ID"] != e1.get("ID"): aliases.append(str(e2["ID"]))
     if aliases:
         merged["aliases"] = smart_union_list(["; ".join(aliases)], sep_candidates=(";",))
 
@@ -306,12 +351,47 @@ def merge_entries(e1: dict, e2: dict) -> dict:
 
     return merged
 
+# ---------------- Diagnóstico de incompletos (CSV) ----------------  # NOTE
+
+def detectar_incompletos(entries: List[Dict]) -> List[Tuple[str, Dict[str, bool]]]:
+    """
+    Devuelve lista de tuplas (id, flags) donde flags marca falta de title/year/abstract.
+    """
+    res: List[Tuple[str, Dict[str, bool]]] = []
+    for e in entries:
+        id_ = str(e.get("ID", "noid"))
+        title_ok = bool(normalized_title(e))
+        year = (e.get("year") or e.get("Year") or e.get("YEAR") or "").strip()
+        year_ok = bool(re.match(r"^\d{4}", year))  # simple heurística: 4 dígitos iniciales
+        abstract_ok = bool((e.get("abstract") or "").strip())
+        if not (title_ok and year_ok and abstract_ok):
+            res.append((id_, {
+                "missing_title": not title_ok,
+                "missing_year": not year_ok,
+                "missing_abstract": not abstract_ok
+            }))
+    return res
+
+def exportar_incompletos_csv(items: List[Tuple[str, Dict[str, bool]]], ruta_csv: Path) -> None:
+    with open(ruta_csv, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["ID", "missing_title", "missing_year", "missing_abstract"])
+        for id_, flags in items:
+            writer.writerow([
+                id_,
+                int(flags["missing_title"]),
+                int(flags["missing_year"]),
+                int(flags["missing_abstract"]),
+            ])
+
+# ---------------- main (ejecutable) ----------------
+
 def main():
     print(f"📥 Leyendo:\n - {ACM_BIB}\n - {SCIENCE_BIB}")
     acm_entries = cargar_bib(ACM_BIB)
     sd_entries = cargar_bib(SCIENCE_BIB)
 
-    all_entries = []
+    all_entries: List[Dict] = []
     all_entries.extend(acm_entries)
     all_entries.extend(sd_entries)
 
@@ -319,32 +399,56 @@ def main():
         print("❌ No se encontraron entradas en los .bib de origen.")
         sys.exit(1)
 
+    # Diagnóstico de incompletos  # NOTE
+    incompletos = detectar_incompletos(all_entries)
+    if incompletos:
+        exportar_incompletos_csv(incompletos, INCOMPLETOS_CSV)
+        print(f"📝 Registros incompletos listados en: {INCOMPLETOS_CSV}")
+    else:
+        try:
+            if INCOMPLETOS_CSV.exists():
+                INCOMPLETOS_CSV.unlink()
+        except Exception:
+            pass
+
     # Deduplicar por título normalizado
-    by_title = {}
+    by_title: Dict[str, Dict] = {}
+    duplicados_descartados: List[Dict] = []  # NOTE
     for e in all_entries:
         tkey = normalized_title(e)
         if not tkey:
-            # sin título, hacemos clave por ID (si existe) para no perder el registro
             tkey = f"__notitle__::{e.get('ID','noid')}"
         if tkey in by_title:
+            duplicados_descartados.append(e)  # recolectar duplicados  # NOTE
             by_title[tkey] = merge_entries(by_title[tkey], e)
         else:
             by_title[tkey] = e
 
-    # Reasignar ID seguro (si hubo fusiones)
-    final_entries = []
+    # Reasignar ID seguro
+    final_entries: List[Dict] = []
     for idx, (tkey, e) in enumerate(by_title.items(), start=1):
         if not e.get("ID"):
-            # genera un ID estable desde el título normalizado (recortado) + índice
             base = re.sub(r"\s+", "_", tkey)[:40].strip("_")
             e["ID"] = f"{base or 'entry'}_{idx}"
         final_entries.append(e)
 
     print(f"🧮 Entradas originales: {len(all_entries)}")
     print(f"✅ Entradas tras deduplicar: {len(final_entries)}")
+    print(f"♻️ Duplicados descartados (registrados): {len(duplicados_descartados)}")  # NOTE
 
     guardar_bib(final_entries, SALIDA_BIB)
     print(f"💾 Archivo unificado escrito en: {SALIDA_BIB}")
+
+    # Guardar duplicados descartados  # NOTE
+    if duplicados_descartados:
+        guardar_bib(duplicados_descartados, DUPS_BIB)
+        print(f"📄 Archivo con duplicados eliminados: {DUPS_BIB}")
+    else:
+        try:
+            if DUPS_BIB.exists():
+                DUPS_BIB.unlink()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()
